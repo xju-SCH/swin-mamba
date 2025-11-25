@@ -1,0 +1,51 @@
+
+# Model settings
+MODEL:
+  TYPE: swin
+  NAME: swin_tiny_patch4_window7_224_cifar100
+  NUM_CLASSES: 100  # CIFAR-100 has 100 classes
+  DROP_PATH_RATE: 0.1
+  SWIN:
+    EMBED_DIM: 96
+    DEPTHS: [2, 2, 6, 2]
+    NUM_HEADS: [3, 6, 12, 24]
+    WINDOW_SIZE: 8
+    PATCH_SIZE: 2
+
+# Data settings
+DATA:
+  DATASET: cifar100
+  IMG_SIZE: 32  # CIFAR-100 images are 32x32
+  BATCH_SIZE: 64  # Smaller batch size for CIFAR-100
+  INTERPOLATION: bicubic
+
+# Training settings
+TRAIN:
+  EPOCHS: 200  # More epochs for smaller dataset
+  WARMUP_EPOCHS: 20
+  WEIGHT_DECAY: 0.05
+  BASE_LR: 5e-4  # Higher learning rate for smaller dataset
+  WARMUP_LR: 5e-7
+  MIN_LR: 5e-6
+  ACCUMULATION_STEPS: 1
+
+# Augmentation settings
+AUG:
+  MIXUP: 0.2  # Less aggressive augmentation for small dataset
+  CUTMIX: 0.0  # Disable CutMix for CIFAR-100
+  AUTO_AUGMENT: rand-m9-mstd0.5-inc1
+  COLOR_JITTER: 0.4
+  REPROB: 0.25
+  REMODE: pixel
+  RECOUNT: 1
+
+# Testing settings
+TEST:
+  CROP: false
+  SEQUENTIAL: false
+  SHUFFLE: false
+
+# Misc
+SAVE_FREQ: 10
+PRINT_FREQ: 50
+SEED: 0
