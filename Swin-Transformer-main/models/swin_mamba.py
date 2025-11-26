@@ -48,7 +48,9 @@ class SwinMambaBlock(nn.Module):
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm,
                  fused_window_process=False, d_state=16, rms_norm=False,
-                 if_bimamba=False, bimamba_type="v2", if_divide_out=False):
+                 if_bimamba=False, bimamba_type="v2", if_divide_out=False,
+                 residual_in_fp32=False, fused_add_norm=False,
+                 norm_epsilon=1e-5, ssm_cfg=None, init_layer_scale=None):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
@@ -69,11 +71,16 @@ class SwinMambaBlock(nn.Module):
         self.mamba = MambaBlock(
             dim=dim,
             d_state=d_state,
+             ssm_cfg=ssm_cfg,
+             norm_epsilon=norm_epsilon,
             rms_norm=rms_norm,
-            drop_path=drop_path,
             if_bimamba=if_bimamba,  # 支持双向Mamba
             bimamba_type=bimamba_type,
-            if_divide_out=if_divide_out  # 输出除法
+            if_divide_out=if_divide_out,  # 输出除法
+            residual_in_fp32=residual_in_fp32,
+            fused_add_norm=fused_add_norm,
+            init_layer_scale=init_layer_scale,
+            drop_path=drop_path,
         )
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
@@ -81,7 +88,8 @@ class SwinMambaBlock(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
-        # 计算移位窗口注意力掩码
+        # 计算移位窗口注意力掩码（仅为保持与原 Swin 结构的兼容性，
+        # 当前 Mamba 不显式使用该 mask）
         if self.shift_size > 0:
             H, W = self.input_resolution
             img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
@@ -208,7 +216,9 @@ class BasicLayer(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
-                 d_state=16, rms_norm=False, if_bimamba=False, bimamba_type="v2", if_divide_out=False):
+                 d_state=16, rms_norm=False, if_bimamba=False, bimamba_type="v2", if_divide_out=False,
+                 residual_in_fp32=False, fused_add_norm=False,
+                 norm_epsilon=1e-5, ssm_cfg=None, init_layer_scale=None):
 
         super().__init__()
         self.dim = dim
@@ -228,7 +238,12 @@ class BasicLayer(nn.Module):
                          norm_layer=norm_layer,
                          d_state=d_state, rms_norm=rms_norm,
                          if_bimamba=if_bimamba, bimamba_type=bimamba_type,
-                         if_divide_out=if_divide_out)
+                         if_divide_out=if_divide_out,
+                         residual_in_fp32=residual_in_fp32,
+                         fused_add_norm=fused_add_norm,
+                         norm_epsilon=norm_epsilon,
+                         ssm_cfg=ssm_cfg,
+                         init_layer_scale=init_layer_scale)
             for i in range(depth)])
 
         # 下采样层
@@ -293,7 +308,9 @@ class SwinMamba(nn.Module):
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
                  use_checkpoint=False, d_state=16, rms_norm=False,
-                 if_bimamba=False, bimamba_type="v2", if_divide_out=False, **kwargs):
+                 if_bimamba=False, bimamba_type="v2", if_divide_out=False,
+                 residual_in_fp32=False, fused_add_norm=False,
+                 norm_epsilon=1e-5, ssm_cfg=None, init_layer_scale=None, **kwargs):
         super().__init__()
 
         self.num_classes = num_classes
@@ -342,7 +359,12 @@ class SwinMamba(nn.Module):
                               rms_norm=rms_norm,
                               if_bimamba=if_bimamba,
                               bimamba_type=bimamba_type,
-                              if_divide_out=if_divide_out)
+                              if_divide_out=if_divide_out,
+                              residual_in_fp32=residual_in_fp32,
+                              fused_add_norm=fused_add_norm,
+                              norm_epsilon=norm_epsilon,
+                              ssm_cfg=ssm_cfg,
+                              init_layer_scale=init_layer_scale)
             self.layers.append(layer)
 
         self.norm = norm_layer(self.num_features)
@@ -401,8 +423,18 @@ def swin_mamba_base_patch4_window7_224(pretrained=False, **kwargs):
 
 @register_model
 def swin_mamba_tiny_bimambav2_patch4_window7_224(pretrained=False, **kwargs):
-    # 集成VIM的双向Mamba特性
+    # 集成 Vision Mamba 的双向 BiMamba 配置：
+    # - 使用 RMSNorm
+    # - residual_in_fp32 / fused_add_norm 为 True
+    # - bimamba_type="v2" 且 if_divide_out=True
     model = SwinMamba(
         img_size=224, patch_size=4, embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24],
-        window_size=7, d_state=16, if_bimamba=True, bimamba_type="v2", if_divide_out=True, **kwargs)
+        window_size=7, d_state=16,
+        rms_norm=True,
+        residual_in_fp32=True,
+        fused_add_norm=True,
+        if_bimamba=False,            # 直接使用 bimamba_type="v2"
+        bimamba_type="v2",
+        if_divide_out=True,
+        **kwargs)
     return model

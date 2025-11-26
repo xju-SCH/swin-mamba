@@ -15,8 +15,8 @@ except ImportError:
 
 class MambaBlock(nn.Module):
     """
-    Mamba模块，用于替换Swin Transformer中的WindowAttention
-    整合VIM中的Block设计理念
+    Mamba模块，用于替换 Swin Transformer 中的 WindowAttention，
+    尽量对齐 Vision Mamba 中的 Block / create_block 设计。
     """
     def __init__(
         self, 
@@ -30,17 +30,26 @@ class MambaBlock(nn.Module):
         layer_idx=None,
         device=None,
         dtype=None,
-        if_bimamba=False,  # 从VIM引入双向Mamba支持
-        bimamba_type="v2",  # 双向Mamba类型
-        if_divide_out=False,  # 从VIM引入输出除法
+        if_bimamba=False,
+        bimamba_type="none",
+        if_divide_out=False,
         init_layer_scale=None,
         drop_path=0.,
     ):
         super().__init__()
+        # 与 Vision Mamba 保持一致的核心超参
         self.residual_in_fp32 = residual_in_fp32
+
+        # 如果未成功编译 RMSNorm，则自动关闭 fused_add_norm，避免运行时报错
+        if fused_add_norm and RMSNorm is None:
+            fused_add_norm = False
         self.fused_add_norm = fused_add_norm
 
-        # 创建Mamba模块，与VIM保持一致
+        # 如果显式打开 if_bimamba，则至少启用一个双向类型（与 Vim 的 create_block 保持一致）
+        if if_bimamba and bimamba_type == "none":
+            bimamba_type = "v1"
+
+        # 创建 Mamba 模块（BiMamba 由 bimamba_type / if_divide_out 控制）
         if ssm_cfg is None:
             ssm_cfg = {}
         factory_kwargs = {"device": device, "dtype": dtype}
@@ -56,7 +65,7 @@ class MambaBlock(nn.Module):
             **factory_kwargs
         )
 
-        # 归一化层
+        # 归一化层：支持 LayerNorm / RMSNorm（与 Vim 保持一致）
         self.norm = (nn.LayerNorm if not rms_norm else RMSNorm)(
             dim, eps=norm_epsilon, **factory_kwargs
         )
