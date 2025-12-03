@@ -252,7 +252,10 @@ def validate(config, data_loader, model):
 
         # measure accuracy and record loss
         loss = criterion(output, target)
-        acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        #（更改）acc1, acc5 = accuracy(output, target, topk=(1, 5)
+        num_classes = output.size(-1)
+        maxk = min(5, num_classes)
+        acc1, acc5 = accuracy(output, target, topk=(1, maxk))
 
         acc1 = reduce_tensor(acc1)
         acc5 = reduce_tensor(acc5)
